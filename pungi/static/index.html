@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pungi</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
+<style>
+  :root {
+    --bg: #f6f5f2; --surface: #ffffff; --surface-2: #efeee9; --text: #1b1b1a; --muted: #6d6b66;
+    --border: #e2e0da; --accent: #13a35a; --accent-ink: #ffffff; --danger: #c8372d; --warn: #b07a12;
+    --radius: 14px; --shadow: 0 1px 2px rgb(0 0 0 / .05), 0 8px 24px rgb(0 0 0 / .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121211; --surface: #1c1c1b; --surface-2: #262624; --text: #f0efea; --muted: #9d9b94;
+      --border: #2f2f2c; --accent: #2bd17a; --accent-ink: #06210f; --danger: #f06a5f; --warn: #e3b04b;
+      --shadow: none; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 16px 80px; }
+  header h1 { margin: 0; font-size: 34px; letter-spacing: -.02em; }
+  header p { margin: 4px 0 28px; color: var(--muted); }
+  form { display: flex; gap: 8px; }
+  input[type=url] { flex: 1; min-width: 0; padding: 14px 16px; font: inherit; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); outline: none; }
+  input[type=url]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  button, .btn { font: inherit; font-weight: 600; padding: 12px 18px; border-radius: var(--radius); border: 0;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer; text-decoration: none; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 6px; }
+  button:disabled { opacity: .55; cursor: progress; }
+  .btn.ghost { background: var(--surface-2); color: var(--text); }
+  .btn.small { padding: 6px 10px; font-size: 13px; border-radius: 9px; }
+  .error { color: var(--danger); margin: 10px 2px 0; min-height: 1.5em; }
+  .job { margin-top: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden; }
+  .job-head { display: grid; grid-template-columns: 96px 1fr; gap: 16px; padding: 16px; align-items: center; }
+  .cover { width: 96px; height: 96px; border-radius: 10px; object-fit: cover; background: var(--surface-2); }
+  .kind { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .job h2 { margin: 2px 0; font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .bar { height: 6px; background: var(--surface-2); border-radius: 99px; overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 16px 14px; align-items: center; }
+  .actions .stat { color: var(--muted); font-size: 14px; margin-right: auto; }
+  .note { margin: 0 16px 14px; padding: 8px 12px; border-radius: 10px; font-size: 13px;
+    background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--text); }
+  ol { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); max-height: 460px; overflow: auto; }
+  li { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 9px 16px;
+    border-bottom: 1px solid var(--border); }
+  li:last-child { border-bottom: 0; }
+  .n { color: var(--muted); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+  .t { min-width: 0; }
+  .t b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t span { display: block; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t .err { color: var(--danger); white-space: normal; }
+  .st { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .mini { width: 54px; height: 4px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+  .mini > i { display: block; height: 100%; background: var(--accent); }
+  .ok { color: var(--accent); font-weight: 600; }
+  .ko { color: var(--danger); font-weight: 600; }
+  a.dl { color: var(--accent); font-weight: 600; text-decoration: none; }
+  @media (max-width: 560px) {
+    main { padding-top: 28px; }
+    form { flex-direction: column; }
+    .job-head { grid-template-columns: 64px 1fr; }
+    .cover { width: 64px; height: 64px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pungi</h1>
+    <p>Colle un lien Spotify — titre, album, playlist ou artiste — et récupère les MP3.</p>
+  </header>
+  <form id="form">
+    <input id="url" type="url" required autocomplete="off" autofocus
+           placeholder="https://open.spotify.com/album/…">
+    <button id="go" type="submit">Télécharger</button>
+  </form>
+  <div class="error" id="error"></div>
+  <section id="jobs"></section>
+</main>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const jobsEl = $("#jobs");
+const polling = new Map();
+const KIND = { track: "Titre", album: "Album", playlist: "Playlist", artist: "Artiste" };
+const STATUS = { pending: "En attente", searching: "Recherche…", downloading: "Téléchargement",
+                 converting: "Conversion", done: "OK", error: "Échec" };
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const dur = ms => ms ? `${Math.floor(ms / 60000)}:${String(Math.round(ms / 1000) % 60).padStart(2, "0")}` : "";
+
+$("#form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const url = $("#url").value.trim();
+  $("#error").textContent = "";
+  $("#go").disabled = true; $("#go").textContent = "Lecture du lien…";
+  try {
+    const r = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ url }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Erreur inconnue");
+    $("#url").value = "";
+    render(data);
+    poll(data.id);
+  } catch (err) {
+    $("#error").textContent = err.message;
+  } finally {
+    $("#go").disabled = false; $("#go").textContent = "Télécharger";
+  }
+});
+
+// coller un lien lance directement le téléchargement
+$("#url").addEventListener("paste", () => setTimeout(() => {
+  if (/spotify\.(com|link)|^spotify:/.test($("#url").value)) $("#form").requestSubmit();
+}, 0));
+
+function poll(id) {
+  if (polling.has(id)) return;
+  const tick = async () => {
+    const r = await fetch(`/api/jobs/${id}`);
+    if (!r.ok) { polling.delete(id); return; }
+    const job = await r.json();
+    render(job);
+    if (job.finished) polling.delete(id);
+    else polling.set(id, setTimeout(tick, 800));
+  };
+  polling.set(id, setTimeout(tick, 400));
+}
+
+function render(job) {
+  let el = document.getElementById("job-" + job.id);
+  if (!el) {
+    el = document.createElement("article");
+    el.className = "job"; el.id = "job-" + job.id;
+    el.innerHTML = `
+      <div class="job-head">
+        <img class="cover" alt="" ${job.cover ? `src="${esc(job.cover)}"` : ""}>
+        <div>
+          <div class="kind">${KIND[job.kind] || ""}</div>
+          <h2>${esc(job.name)}</h2>
+          <div class="sub">${esc(job.subtitle)}</div>
+          <div class="bar"><i></i></div>
+        </div>
+      </div>
+      ${job.truncated ? `<div class="note">${job.kind === "artist"
+        ? "Sans clés API Spotify, seuls les 10 titres populaires de l'artiste sont récupérés."
+        : "Sans clés API Spotify, seuls les 100 premiers titres de la playlist sont récupérés."} Voir .env.example.</div>` : ""}
+      <div class="actions">
+        <span class="stat"></span>
+        <button class="btn ghost small retry" hidden>Réessayer les échecs</button>
+        <a class="btn small zip" hidden>Tout télécharger (.zip)</a>
+      </div>
+      <ol></ol>`;
+    $(".retry", el).addEventListener("click", async () => {
+      await fetch(`/api/jobs/${job.id}/retry`, { method: "POST" });
+      poll(job.id);
+    });
+    jobsEl.prepend(el);
+  }
+
+  $(".bar > i", el).style.width = (job.progress * 100).toFixed(1) + "%";
+  $(".stat", el).textContent = job.finished
+    ? `Terminé · ${job.done}/${job.total}${job.failed ? ` · ${job.failed} échec(s)` : ""} · ${job.folder}`
+    : `${job.done}/${job.total} prêtes${job.failed ? ` · ${job.failed} échec(s)` : ""}`;
+  const zip = $(".zip", el);
+  zip.hidden = !(job.finished && job.done > 0 && job.total > 1);
+  zip.href = `/api/jobs/${job.id}/zip`;
+  $(".retry", el).hidden = !(job.finished && job.failed > 0);
+
+  $("ol", el).innerHTML = job.tracks.map(t => {
+    let st;
+    if (t.status === "done") st = `<a class="dl" href="/api/jobs/${job.id}/tracks/${t.index}" title="Enregistrer le MP3">MP3 ↓</a>`;
+    else if (t.status === "error") st = `<span class="ko">${STATUS.error}</span>`;
+    else if (t.status === "pending") st = STATUS.pending;
+    else st = `${STATUS[t.status]} <span class="mini"><i style="width:${(t.progress * 100).toFixed(0)}%"></i></span>`;
+    return `<li>
+      <span class="n">${t.index + 1}</span>
+      <div class="t"><b>${esc(t.title)}</b>
+        <span>${esc(t.artists.join(", "))}${t.duration_ms ? " · " + dur(t.duration_ms) : ""}</span>
+        ${t.error ? `<span class="err">${esc(t.error)}</span>` : ""}</div>
+      <span class="st">${st}</span></li>`;
+  }).join("");
+}
+
+// reprend les jobs en cours après un rechargement de la page
+fetch("/api/jobs").then(r => r.json()).then(list => list.reverse().forEach(j => {
+  fetch(`/api/jobs/${j.id}`).then(r => r.json()).then(job => { render(job); if (!job.finished) poll(job.id); });
+}));
+</script>
+</body>
+</html>
