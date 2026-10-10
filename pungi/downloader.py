@@ -229,13 +229,18 @@ class Downloader:
                 t.album = info["album"]
 
             progress("converting", 0.85)
-            part = Path(tmp) / "out.mp3"
-            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(src), "-vn",
-                            "-c:a", "libmp3lame", "-b:a", BITRATE, str(part)],
-                           check=True, capture_output=True,
-                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            self._tag(part, t)
-            part.replace(dest)
+            # Fichier partiel écrit à côté de la destination : le renommage final reste sur
+            # le même disque (le dossier temporaire peut être sur C: et la musique sur D:).
+            part = dest.with_name(f"{dest.stem}.{Path(tmp).name}.part.mp3")
+            try:
+                subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(src), "-vn",
+                                "-c:a", "libmp3lame", "-b:a", BITRATE, str(part)],
+                               check=True, capture_output=True,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                self._tag(part, t)
+                part.replace(dest)
+            finally:
+                part.unlink(missing_ok=True)
 
         progress("done", 1.0)
         return dest, info.get("webpage_url", "")
