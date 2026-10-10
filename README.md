@@ -33,7 +33,7 @@ Les fichiers vont dans `downloads/<nom de l'album ou de la playlist>/`. On peut 
 | Artiste : 10 titres populaires | Discographie (albums + singles) |
 | Pas de nom d'album pour les titres de playlist (repris de YouTube Music quand c'est possible) | Album complet |
 
-Les titres soumis à vérification d'âge sur YouTube demandent `PUNGI_COOKIES_BROWSER=firefox` (ou un autre navigateur connecté à YouTube).
+Titres soumis à vérification d'âge : Pungi cherche d'abord une autre version non restreinte. Sinon, il utilise les cookies YouTube définis par `PUNGI_COOKIES_FILE` (fichier cookies.txt, fonctionne navigateur ouvert) ou par `PUNGI_COOKIES_BROWSER` (Firefox, ou un navigateur Chromium fermé ; Opera GX est détecté avec `opera`).
 
 Configuration : voir `.env.example`.
 

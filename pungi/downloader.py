@@ -9,6 +9,7 @@ import random
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -19,6 +20,8 @@ import httpx
 import imageio_ffmpeg
 import yt_dlp
 from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TRCK, ID3NoHeaderError
+
+from yt_dlp.cookies import YoutubeDLCookieJar, extract_cookies_from_browser
 
 from .spotify import USER_AGENT, Track
 
@@ -34,6 +37,25 @@ Progress = Callable[[str, float], None]
 
 class NotFound(Exception):
     pass
+
+
+class CookieError(Exception):
+    pass
+
+
+class _SilentLogger:
+    """Les échecs d'un candidat sont normaux (on passe au suivant) : pas de bruit en console."""
+    def debug(self, msg: str) -> None: pass
+    def info(self, msg: str) -> None: pass
+    def warning(self, msg: str) -> None: pass
+    def error(self, msg: str) -> None: pass
+
+
+_AGE_MARKERS = ("confirm your age", "age-restricted", "inappropriate for some users")
+
+
+def _is_age_restricted(exc: Exception) -> bool:
+    return any(m in str(exc).lower() for m in _AGE_MARKERS)
 
 
 def _norm(s: str) -> str:
@@ -67,11 +89,49 @@ class Downloader:
         self.base_opts = {
             "quiet": True, "no_warnings": True, "noprogress": True,
             "js_runtimes": {"node": {}, "deno": {}},
-            "retries": 5, "fragment_retries": 5,
+            "retries": 5, "fragment_retries": 5, "logger": _SilentLogger(),
         }
-        # ex. PUNGI_COOKIES_BROWSER=firefox : permet les titres soumis à vérification d'âge
-        if browser := os.getenv("PUNGI_COOKIES_BROWSER"):
-            self.base_opts["cookiesfrombrowser"] = (browser,)
+        self._cookie_lock = threading.Lock()
+        self._cookie_jar = None
+
+    # ------------------------------------------------------------------ cookies
+
+    @staticmethod
+    def cookies_configured() -> bool:
+        return bool(os.getenv("PUNGI_COOKIES_FILE") or os.getenv("PUNGI_COOKIES_BROWSER"))
+
+    def _cookies(self):
+        """Charge une seule fois les cookies YouTube (fichier cookies.txt ou navigateur).
+        Ils ne servent que pour les titres soumis à vérification d'âge."""
+        with self._cookie_lock:
+            if self._cookie_jar is not None:
+                return self._cookie_jar
+            if file := os.getenv("PUNGI_COOKIES_FILE"):
+                path = Path(os.path.expandvars(file)).expanduser()
+                if not path.is_file():
+                    raise CookieError(f"Fichier de cookies introuvable : {path}")
+                jar = YoutubeDLCookieJar(str(path))
+                jar.load()
+            else:
+                browser, profile = _browser_spec(os.environ["PUNGI_COOKIES_BROWSER"])
+                try:
+                    jar = extract_cookies_from_browser(browser, profile)
+                except Exception as exc:
+                    if "could not copy" in str(exc).lower():
+                        raise CookieError(
+                            f"{browser} verrouille ses cookies tant qu'il est ouvert : ferme-le puis "
+                            "réessaie, ou utilise PUNGI_COOKIES_FILE (voir .env.example).") from exc
+                    raise CookieError(f"Lecture des cookies {browser} impossible : {exc}") from exc
+            if not any("youtube.com" in c.domain for c in jar):
+                raise CookieError("Aucun cookie YouTube trouvé : connecte-toi à YouTube dans ce navigateur.")
+            self._cookie_jar = jar
+            return jar
+
+    def _ydl(self, opts: dict, cookies: bool = False) -> yt_dlp.YoutubeDL:
+        ydl = yt_dlp.YoutubeDL(opts)
+        if cookies:
+            ydl.__dict__["cookiejar"] = self._cookies()  # remplace le cached_property de yt-dlp
+        return ydl
 
     # ------------------------------------------------------------------ recherche
 
@@ -86,15 +146,18 @@ class Downloader:
         target = t.duration_ms / 1000
         return abs(seconds - target) <= max(10, target * 0.07)
 
-    def candidates(self, t: Track, ydl: yt_dlp.YoutubeDL):
-        """Génère, du meilleur au moins bon, les infos yt-dlp complètes des sources plausibles."""
+    def candidates(self, t: Track, ydl: yt_dlp.YoutubeDL, age_blocked: list[str]):
+        """Génère, du meilleur au moins bon, les infos yt-dlp complètes des sources plausibles.
+        Les vidéos refusées pour cause de vérification d'âge sont notées dans `age_blocked`."""
         artists = " ".join(t.artists[:2])
         tried: set[str] = set()
 
         def full(url: str) -> dict | None:
             try:
                 return ydl.extract_info(url, download=False)
-            except yt_dlp.utils.DownloadError:  # vidéo bloquée, soumise à l'âge, etc.
+            except yt_dlp.utils.DownloadError as exc:  # vidéo bloquée, soumise à l'âge, etc.
+                if _is_age_restricted(exc):
+                    age_blocked.append(url)
                 return None
 
         # 1) YouTube Music, rubrique « titres » : versions officielles (chaînes « - Topic »)
@@ -108,7 +171,9 @@ class Downloader:
             if not info:
                 continue
             yt_artists = " ".join(info.get("artists") or [info.get("artist") or info.get("channel") or ""])
-            artist_ok = not t.artists or any(_norm(a) and _norm(a) in _norm(yt_artists) for a in t.artists)                 or _similar(yt_artists, artists) > 0.5
+            artist_ok = (not t.artists
+                         or any(_norm(a) and _norm(a) in _norm(yt_artists) for a in t.artists)
+                         or _similar(yt_artists, artists) > 0.5)
             if artist_ok and self._duration_ok(t, info.get("duration")):
                 yield info
 
@@ -148,19 +213,17 @@ class Downloader:
 
             opts = {**self.base_opts, "format": "bestaudio/best",
                     "outtmpl": str(Path(tmp) / "%(id)s.%(ext)s"), "progress_hooks": [hook]}
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            progress("searching", 0.05)
+            info, last_error, age_blocked = self._acquire(t, opts, progress, cookies=False)
+            if info is None and age_blocked:
+                if not self.cookies_configured():
+                    raise CookieError("Titre soumis à vérification d'âge sur YouTube : configure "
+                                      "PUNGI_COOKIES_FILE ou PUNGI_COOKIES_BROWSER (voir .env.example).")
                 progress("searching", 0.05)
-                info, last_error = None, None
-                for attempt, cand in enumerate(self.candidates(t, ydl)):
-                    if attempt >= 3:
-                        break
-                    progress("downloading", 0.1)
-                    info, last_error = self._fetch_with_backoff(ydl, cand)
-                    if info:
-                        break
-                if info is None:
-                    raise last_error or NotFound("Aucune source audio correspondante trouvée.")
-                src = Path(info["requested_downloads"][0]["filepath"])
+                info, last_error, _ = self._acquire(t, opts, progress, cookies=True)
+            if info is None:
+                raise last_error or NotFound("Aucune source audio correspondante trouvée.")
+            src = Path(info["requested_downloads"][0]["filepath"])
 
             if not t.album and info.get("album"):
                 t.album = info["album"]
@@ -176,6 +239,20 @@ class Downloader:
 
         progress("done", 1.0)
         return dest, info.get("webpage_url", "")
+
+    def _acquire(self, t: Track, opts: dict, progress: Progress, cookies: bool):
+        """Essaie les meilleures sources jusqu'à en télécharger une.
+        Renvoie (info, dernière erreur, vidéos refusées pour l'âge)."""
+        info, last_error, age_blocked = None, None, []
+        with self._ydl(opts, cookies) as ydl:
+            for attempt, cand in enumerate(self.candidates(t, ydl, age_blocked)):
+                if attempt >= 3:
+                    break
+                progress("downloading", 0.1)
+                info, last_error = self._fetch_with_backoff(ydl, cand)
+                if info:
+                    break
+        return info, last_error, age_blocked
 
     @staticmethod
     def _fetch_with_backoff(ydl: yt_dlp.YoutubeDL, cand: dict) -> tuple[dict | None, Exception | None]:
@@ -217,3 +294,25 @@ class Downloader:
             except httpx.HTTPError:
                 pass
         tags.save(path, v2_version=3)
+
+
+_BROWSER_DIRS = {  # navigateurs dont le profil n'est pas là où yt-dlp le cherche (ex. Opera GX)
+    "opera": [r"%APPDATA%\Opera Software\Opera Stable", r"%APPDATA%\Opera Software\Opera GX Stable",
+              "~/Library/Application Support/com.operasoftware.Opera",
+              "~/Library/Application Support/com.operasoftware.OperaGX",
+              "~/.config/opera"],
+}
+
+
+def _browser_spec(value: str) -> tuple[str, str | None]:
+    """« opera », « opera:D:/chemin/profil » ou « chrome:Profile 1 » → (navigateur, profil)."""
+    browser, _, profile = value.strip().partition(":")
+    browser = browser.lower()
+    if browser in ("operagx", "opera_gx", "opera-gx"):
+        browser = "opera"
+    if not profile and browser in _BROWSER_DIRS:
+        for d in _BROWSER_DIRS[browser]:
+            path = Path(os.path.expandvars(d)).expanduser()
+            if path.is_dir():
+                return browser, str(path)
+    return browser, profile or None
