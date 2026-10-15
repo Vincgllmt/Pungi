@@ -7,17 +7,23 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .jobs import Job, JobManager
+from .jobs import DOWNLOAD_DIR, Job, JobManager
+from .library import Busy, Library
 from .spotify import SpotifyError
 
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Pungi")
 manager = JobManager()
+library = Library(DOWNLOAD_DIR)
 
 
 class JobRequest(BaseModel):
     url: str
+
+
+class ApplyRequest(BaseModel):
+    paths: list[str]
 
 
 def _job(job_id: str) -> Job:
@@ -76,3 +82,26 @@ async def get_zip(job_id: str):
         raise HTTPException(409, "Aucune piste prête.")
     path = await run_in_threadpool(manager.build_zip, job)
     return FileResponse(path, media_type="application/zip", filename=path.name.split(" [")[0] + ".zip")
+
+
+@app.get("/api/library")
+def get_library(items: bool = False):
+    return library.to_dict(items)
+
+
+@app.post("/api/library/scan")
+def scan_library():
+    try:
+        library.scan()
+    except Busy as exc:
+        raise HTTPException(409, str(exc))
+    return library.to_dict()
+
+
+@app.post("/api/library/apply")
+def apply_library(req: ApplyRequest):
+    try:
+        library.apply(req.paths)
+    except Busy as exc:
+        raise HTTPException(409, str(exc))
+    return library.to_dict()

@@ -17,6 +17,7 @@
       --shadow: none; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width: 860px; margin: 0 auto; padding: 48px 16px 80px; }
@@ -61,6 +62,16 @@
   .ok { color: var(--accent); font-weight: 600; }
   .ko { color: var(--danger); font-weight: 600; }
   a.dl { color: var(--accent); font-weight: 600; text-decoration: none; }
+  #library .job-head { grid-template-columns: 1fr; }
+  #library li input { width: 16px; height: 16px; margin: 0 auto; accent-color: var(--accent); }
+  #library .chg { white-space: normal; }
+  #library .chg em { font-style: normal; color: var(--text); }
+  .thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--surface-2); display: block; }
+  details { border-top: 1px solid var(--border); }
+  summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 14px; }
+  details ol { border-top: 0; }
+  details li { grid-template-columns: 1fr; }
+  label.all { font-size: 14px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
   @media (max-width: 560px) {
     main { padding-top: 28px; }
     form { flex-direction: column; }
@@ -81,6 +92,26 @@
     <button id="go" type="submit">Télécharger</button>
   </form>
   <div class="error" id="error"></div>
+  <article class="job" id="library">
+    <div class="job-head">
+      <div>
+        <div class="kind">Bibliothèque</div>
+        <h2>Compléter les tags</h2>
+        <div class="sub">Scanne le dossier de musique et complète via Deezer les tags vides (album, piste, année,
+          genre, pochette). Les tags déjà remplis ne sont jamais modifiés. <span class="root"></span></div>
+        <div class="bar" hidden><i></i></div>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="stat"></span>
+      <label class="all" hidden><input type="checkbox" checked> Tout cocher</label>
+      <button class="btn small apply" hidden>Appliquer</button>
+      <button class="btn ghost small scan">Scanner</button>
+    </div>
+    <div class="error lib-error" hidden></div>
+    <ol class="proposed" hidden></ol>
+    <details class="others" hidden><summary></summary><ol></ol></details>
+  </article>
   <section id="jobs"></section>
 </main>
 
@@ -187,6 +218,113 @@ function render(job) {
       <span class="st">${st}</span></li>`;
   }).join("");
 }
+
+// ------------------------------------------------------------------ bibliothèque
+const lib = $("#library");
+const FIELD = { album: "Album", album_artist: "Artiste de l'album", track: "Piste", disc: "Disque",
+                year: "Année", genre: "Genre", cover: "Pochette" };
+const LIB_STATUS = { applied: "Écrit ✓", error: "Échec" };
+let libPoll = null;
+
+async function libAction(url, body) {
+  $(".lib-error", lib).hidden = true;
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                               body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json();
+  if (!r.ok) { $(".lib-error", lib).textContent = data.detail || "Erreur inconnue"; $(".lib-error", lib).hidden = false; }
+  else renderLibrary(data);
+  libTick();
+}
+
+$(".scan", lib).addEventListener("click", () => libAction("/api/library/scan"));
+$(".apply", lib).addEventListener("click", () => {
+  const paths = [...lib.querySelectorAll(".proposed input:checked")].map(i => i.value);
+  if (paths.length) libAction("/api/library/apply", { paths });
+});
+$(".all input", lib).addEventListener("change", e => {
+  lib.querySelectorAll(".proposed input").forEach(i => { i.checked = e.target.checked; });
+  updateApply();
+});
+$(".proposed", lib).addEventListener("change", updateApply);
+
+function updateApply() {
+  const boxes = [...lib.querySelectorAll(".proposed input")];
+  const n = boxes.filter(i => i.checked).length;
+  $(".apply", lib).textContent = `Appliquer (${n})`;
+  $(".apply", lib).disabled = n === 0;
+  $(".all input", lib).checked = n === boxes.length;
+}
+
+function libTick() {
+  clearTimeout(libPoll);
+  libPoll = setTimeout(async () => {
+    const state = await (await fetch("/api/library")).json();
+    const busy = state.status === "scanning" || state.status === "applying";
+    if (busy) { renderLibrary(state); libTick(); }
+    else renderLibrary(await (await fetch("/api/library?items=true")).json());
+  }, 600);
+}
+
+function renderLibrary(s) {
+  const busy = s.status === "scanning" || s.status === "applying";
+  const c = s.counts || {};
+  $(".root", lib).textContent = `Dossier : ${s.root}`;
+  $(".bar", lib).hidden = !busy;
+  $(".bar > i", lib).style.width = (s.total ? s.done / s.total * 100 : 0).toFixed(1) + "%";
+  $(".scan", lib).disabled = busy;
+  $(".scan", lib).textContent = s.status === "idle" ? "Scanner" : "Relancer le scan";
+  if (s.error) { $(".lib-error", lib).textContent = s.error; $(".lib-error", lib).hidden = false; }
+
+  if (busy) {
+    $(".stat", lib).textContent = `${s.status === "scanning" ? "Analyse" : "Écriture"} : ${s.done}/${s.total}`;
+    $(".apply", lib).hidden = $(".all", lib).hidden = true;
+    return;
+  }
+  if (s.status === "idle" || !s.items) { $(".stat", lib).textContent = ""; return; }
+
+  const parts = [`${s.items.length} fichier(s)`];
+  if (c.proposed) parts.push(`${c.proposed} à compléter`);
+  if (c.applied) parts.push(`${c.applied} mis à jour`);
+  if (c.complete) parts.push(`${c.complete} déjà complets`);
+  if (c.unmatched) parts.push(`${c.unmatched} sans correspondance`);
+  if (c.error) parts.push(`${c.error} échec(s)`);
+  $(".stat", lib).textContent = parts.join(" · ");
+
+  const shown = s.items.filter(it => ["proposed", "applied", "error"].includes(it.status) && Object.keys(it.changes).length);
+  const ol = $(".proposed", lib);
+  ol.hidden = !shown.length;
+  ol.innerHTML = shown.map(it => {
+    const changes = Object.entries(it.changes).map(([k, v]) =>
+      k === "cover" ? FIELD.cover : `${FIELD[k]} : <em>${esc(v)}</em>`).join(" · ");
+    const m = it.match || {};
+    const head = it.status === "proposed"
+      ? `<input type="checkbox" value="${esc(it.path)}" checked>`
+      : `<span class="${it.status === "applied" ? "ok" : "ko"}" title="${esc(LIB_STATUS[it.status])}">${it.status === "applied" ? "✓" : "✕"}</span>`;
+    return `<li>${head}
+      <div class="t"><b>${esc(it.title)} — ${esc(it.artists.join(", "))}</b>
+        <span title="${esc(it.path)}">${esc(it.path)}</span>
+        <span class="chg">${changes}</span>
+        ${it.error ? `<span class="err">${esc(it.error)}</span>` : ""}</div>
+      <a href="${esc(m.link || "#")}" target="_blank" rel="noopener" title="Deezer : ${esc(m.title)} — ${esc(m.artist)} (${esc(m.album)})">
+        <img class="thumb" alt="" ${m.cover ? `src="${esc(m.cover)}"` : ""}></a></li>`;
+  }).join("");
+
+  const proposed = shown.filter(it => it.status === "proposed").length;
+  $(".apply", lib).hidden = $(".all", lib).hidden = !proposed;
+  updateApply();
+
+  const others = s.items.filter(it => it.status === "unmatched" || (it.status === "error" && !Object.keys(it.changes).length));
+  const det = $(".others", lib);
+  det.hidden = !others.length;
+  $("summary", det).textContent = `${others.length} fichier(s) sans proposition`;
+  $("ol", det).innerHTML = others.map(it => `<li><div class="t"><b>${esc(it.path)}</b>
+    <span class="err">${esc(it.error)}</span></div></li>`).join("");
+}
+
+fetch("/api/library?items=true").then(r => r.json()).then(s => {
+  renderLibrary(s);
+  if (s.status === "scanning" || s.status === "applying") libTick();
+});
 
 // reprend les jobs en cours après un rechargement de la page
 fetch("/api/jobs").then(r => r.json()).then(list => list.reverse().forEach(j => {

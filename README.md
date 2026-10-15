@@ -25,6 +25,14 @@ Aucun outil externe n'est nécessaire : ffmpeg est fourni par `imageio-ffmpeg`. 
 
 Les fichiers vont dans `downloads/<nom de l'album ou de la playlist>/`. On peut les récupérer un par un ou en `.zip` depuis la page. Un fichier déjà présent n'est pas re-téléchargé.
 
+## Compléter les tags de la bibliothèque
+
+La carte **Bibliothèque** de la page scanne tous les MP3 de `PUNGI_DOWNLOAD_DIR` (sous-dossiers compris) et cherche chaque titre sur Deezer (API publique, sans clé) d'après son titre, son artiste et sa durée. Pour chaque fichier, elle propose de remplir les tags **vides** : album, artiste de l'album, numéro de piste, disque, année, genre et pochette. On coche ce qu'on garde, puis « Appliquer ».
+
+- Un tag déjà rempli n'est jamais modifié, et les fichiers ne sont ni renommés ni déplacés.
+- Si le titre est trouvé sur un autre album que celui du fichier, seul le genre est proposé (pour ne pas mélanger piste, année ou pochette de deux éditions).
+- Les fichiers dont la correspondance n'est pas fiable sont listés à part, sans proposition.
+
 ## Limites
 
 | Sans clés API | Avec clés API |
@@ -44,6 +52,7 @@ pungi/
   spotify.py     lecture des liens et métadonnées (embed / API)
   downloader.py  recherche YouTube, téléchargement, conversion, tags
   jobs.py        file de téléchargements parallèles, ZIP
+  library.py     scan de la bibliothèque et complétion des tags via Deezer
   app.py         API HTTP (FastAPI)
   static/        interface web
 ```
