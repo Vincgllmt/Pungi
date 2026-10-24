@@ -1,4 +1,4 @@
-"""File de téléchargements : un job par lien Spotify, pistes traitées en parallèle."""
+"""File de téléchargements : un job par lien Spotify ou résultat de recherche, pistes traitées en parallèle."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import spotify
+from . import deezer, spotify
 from .downloader import Downloader, safe_name
 
 DOWNLOAD_DIR = Path(os.getenv("PUNGI_DOWNLOAD_DIR", Path.cwd() / "downloads")).resolve()
@@ -65,9 +65,9 @@ class JobManager:
         self.downloader = Downloader()
 
     def create(self, url: str) -> Job:
-        collection = spotify.fetch(url)
+        collection = deezer.fetch(url) if deezer.is_ref(url) else spotify.fetch(url)
         if not collection.tracks:
-            raise spotify.SpotifyError("Aucune piste trouvée pour ce lien.")
+            raise spotify.SpotifyError("Aucune piste trouvée.")
         folder = DOWNLOAD_DIR if collection.kind == "track" else DOWNLOAD_DIR / safe_name(collection.name)
         job = Job(uuid.uuid4().hex[:12], url, collection, folder,
                   [TrackState(t) for t in collection.tracks])
@@ -88,7 +88,7 @@ class JobManager:
             state.status, state.progress = status, value
 
         try:
-            if not state.track.cover_url:
+            if not state.track.cover_url and state.track.spotify_id:
                 try:
                     spotify.enrich_from_embed(state.track)
                 except Exception:

@@ -1,20 +1,28 @@
 # Pungi
 
-Colle un lien Spotify (titre, album, playlist ou artiste), Pungi récupère les morceaux en **MP3 320 kbps** avec tous les tags : titre, artistes, album, numéro de piste, année et pochette.
+Cherche un artiste, un album ou un titre, ou colle un lien Spotify (titre, album, playlist ou artiste) : Pungi récupère les morceaux en **MP3 320 kbps** avec tous les tags : titre, artistes, album, numéro de piste, année et pochette.
 
 ## Lancer
 
-Double-clique sur `pungi.bat`. Au premier lancement, il crée l'environnement Python et installe les dépendances. Ensuite il ouvre http://127.0.0.1:8000.
+Double-clique sur `pungi.bat`. Au premier lancement, il crée l'environnement Python et installe les dépendances. Ensuite il ouvre http://127.0.0.1:8001.
 
 Ou à la main :
 
 ```sh
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python -m pungi            # --port 8000 --no-browser
+.venv\Scripts\python -m pungi            # --port 8001 --no-browser
 ```
 
 Aucun outil externe n'est nécessaire : ffmpeg est fourni par `imageio-ffmpeg`. Node.js est utilisé par yt-dlp s'il est installé.
+
+## Recherche
+
+Taper du texte dans le champ lance une recherche sur Deezer (API publique, sans clé) : artistes, albums et titres. Chaque album ou titre a son bouton de téléchargement. Cliquer sur un artiste affiche ses sorties (albums, EP, singles) avec un bouton « Toute la discographie ».
+
+Les métadonnées viennent alors de Deezer : album, artiste de l'album, numéro de piste, année et pochette 1000×1000 sont toujours remplis. La discographie complète d'un artiste est disponible sans clé API (compilations exclues, doublons de titre écartés en gardant la version de l'album original). Le téléchargement audio, lui, passe par YouTube comme pour un lien Spotify.
+
+Coller un lien Spotify lance directement le téléchargement, comme avant.
 
 ## Fonctionnement
 
@@ -50,6 +58,7 @@ Configuration : voir `.env.example`.
 ```
 pungi/
   spotify.py     lecture des liens et métadonnées (embed / API)
+  deezer.py      recherche et métadonnées Deezer (aussi utilisé par la bibliothèque)
   downloader.py  recherche YouTube, téléchargement, conversion, tags
   jobs.py        file de téléchargements parallèles, ZIP
   library.py     scan de la bibliothèque et complétion des tags via Deezer

@@ -24,9 +24,9 @@
   header h1 { margin: 0; font-size: 34px; letter-spacing: -.02em; }
   header p { margin: 4px 0 28px; color: var(--muted); }
   form { display: flex; gap: 8px; }
-  input[type=url] { flex: 1; min-width: 0; padding: 14px 16px; font: inherit; color: var(--text);
+  input[type=search] { flex: 1; min-width: 0; padding: 14px 16px; font: inherit; color: var(--text);
     background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); outline: none; }
-  input[type=url]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+  input[type=search]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
   button, .btn { font: inherit; font-weight: 600; padding: 12px 18px; border-radius: var(--radius); border: 0;
     background: var(--accent); color: var(--accent-ink); cursor: pointer; text-decoration: none; white-space: nowrap;
     display: inline-flex; align-items: center; gap: 6px; }
@@ -71,6 +71,24 @@
   summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 14px; }
   details ol { border-top: 0; }
   details li { grid-template-columns: 1fr; }
+  #results { margin-top: 8px; }
+  #results h3 { margin: 22px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+  #results .empty { color: var(--muted); }
+  .artists { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+  .artist { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 6px; font-weight: 500;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 99px; }
+  .artist img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
+  .albums { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .album { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .album img { width: 100%; aspect-ratio: 1; border-radius: 8px; object-fit: cover; background: var(--surface-2); }
+  .album button { margin-top: auto; justify-content: center; }
+  .tracks { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-height: none; }
+  .tracks li { grid-template-columns: 40px 1fr auto; }
+  .artist-head { display: flex; align-items: center; gap: 14px; margin-top: 18px; flex-wrap: wrap; }
+  .artist-head img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
+  .artist-head h2 { margin: 0; font-size: 22px; flex: 1; min-width: 0; }
+  .back { background: none; color: var(--muted); padding: 0; font-weight: 500; margin-top: 14px; }
   label.all { font-size: 14px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
   @media (max-width: 560px) {
     main { padding-top: 28px; }
@@ -84,14 +102,15 @@
 <main>
   <header>
     <h1>Pungi</h1>
-    <p>Colle un lien Spotify — titre, album, playlist ou artiste — et récupère les MP3.</p>
+    <p>Cherche un artiste, un album ou un titre — ou colle un lien Spotify — et récupère les MP3.</p>
   </header>
   <form id="form">
-    <input id="url" type="url" required autocomplete="off" autofocus
-           placeholder="https://open.spotify.com/album/…">
-    <button id="go" type="submit">Télécharger</button>
+    <input id="url" type="search" required autocomplete="off" autofocus
+           placeholder="Artiste, album, titre ou lien Spotify">
+    <button id="go" type="submit">Chercher</button>
   </form>
   <div class="error" id="error"></div>
+  <section id="results" hidden></section>
   <article class="job" id="library">
     <div class="job-head">
       <div>
@@ -126,30 +145,139 @@ const STATUS = { pending: "En attente", searching: "Recherche…", downloading: 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const dur = ms => ms ? `${Math.floor(ms / 60000)}:${String(Math.round(ms / 1000) % 60).padStart(2, "0")}` : "";
 
+const isLink = s => /spotify\.(com|link)|^spotify:/.test(s);
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || "Erreur inconnue");
+  return data;
+}
+
+async function startJob(url) {
+  const r = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ url }) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || "Erreur inconnue");
+  render(data);
+  poll(data.id);
+}
+
+const updateGo = () => { $("#go").textContent = isLink($("#url").value.trim()) ? "Télécharger" : "Chercher"; };
+
 $("#form").addEventListener("submit", async e => {
   e.preventDefault();
-  const url = $("#url").value.trim();
+  const value = $("#url").value.trim();
+  if (!isLink(value)) return search(value);
   $("#error").textContent = "";
   $("#go").disabled = true; $("#go").textContent = "Lecture du lien…";
   try {
-    const r = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({ url }) });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || "Erreur inconnue");
+    await startJob(value);
     $("#url").value = "";
-    render(data);
-    poll(data.id);
+    results.hidden = true;
   } catch (err) {
     $("#error").textContent = err.message;
   } finally {
-    $("#go").disabled = false; $("#go").textContent = "Télécharger";
+    $("#go").disabled = false; updateGo();
   }
 });
 
-// coller un lien lance directement le téléchargement
+// coller un lien lance directement le téléchargement ; taper du texte lance la recherche
+let searchTimer = null;
+$("#url").addEventListener("input", () => {
+  updateGo();
+  clearTimeout(searchTimer);
+  const value = $("#url").value.trim();
+  if (isLink(value)) return;
+  if (value.length >= 3) searchTimer = setTimeout(() => search(value), 400);
+  else if (!value) results.hidden = true;
+});
 $("#url").addEventListener("paste", () => setTimeout(() => {
-  if (/spotify\.(com|link)|^spotify:/.test($("#url").value)) $("#form").requestSubmit();
+  if (isLink($("#url").value)) { clearTimeout(searchTimer); $("#form").requestSubmit(); }
 }, 0));
+
+// ------------------------------------------------------------------ recherche
+const results = $("#results");
+const ALBUM_TYPE = { album: "Album", ep: "EP", single: "Single", compile: "Compilation" };
+let searchSeq = 0;
+let lastSearch = null;
+
+async function search(q) {
+  if (!q) return;
+  clearTimeout(searchTimer);
+  const seq = ++searchSeq;
+  $("#error").textContent = "";
+  try {
+    const data = await getJSON(`/api/search?q=${encodeURIComponent(q)}`);
+    if (seq !== searchSeq) return;  // une recherche plus récente est partie entre-temps
+    lastSearch = data;
+    renderSearch(data);
+  } catch (err) {
+    if (seq === searchSeq) $("#error").textContent = err.message;
+  }
+}
+
+const dlButton = (ref, label = "Télécharger") =>
+  `<button class="btn small dl-ref" data-ref="${esc(ref)}">${label}</button>`;
+
+function albumCard(a, withArtist = true) {
+  const meta = [withArtist && a.artist, ALBUM_TYPE[a.type], a.year, a.nb_tracks && `${a.nb_tracks} titres`].filter(Boolean);
+  return `<div class="album"><img alt="" loading="lazy" ${a.cover ? `src="${esc(a.cover)}"` : ""}>
+    <div class="t"><b title="${esc(a.title)}">${esc(a.title)}</b><span>${esc(meta.join(" · "))}</span></div>
+    ${dlButton(`deezer:album:${a.id}`)}</div>`;
+}
+
+function renderSearch(data) {
+  results.hidden = false;
+  const { tracks, albums, artists } = data;
+  if (!tracks.length && !albums.length && !artists.length) {
+    results.innerHTML = `<p class="empty">Aucun résultat.</p>`;
+    return;
+  }
+  results.innerHTML = `
+    ${artists.length ? `<h3>Artistes</h3><div class="artists">${artists.map(a => `
+      <button class="artist" data-id="${a.id}"><img alt="" ${a.picture ? `src="${esc(a.picture)}"` : ""}>${esc(a.name)}</button>`).join("")}</div>` : ""}
+    ${albums.length ? `<h3>Albums</h3><div class="albums">${albums.map(a => albumCard(a)).join("")}</div>` : ""}
+    ${tracks.length ? `<h3>Titres</h3><ol class="tracks">${tracks.map(t => `<li>
+      <img class="thumb" alt="" ${t.cover ? `src="${esc(t.cover)}"` : ""}>
+      <div class="t"><b>${esc(t.title)}</b><span>${esc([t.artist, t.album, dur(t.duration_ms)].filter(Boolean).join(" · "))}</span></div>
+      ${dlButton(`deezer:track:${t.id}`, "MP3")}</li>`).join("")}</ol>` : ""}`;
+}
+
+async function showArtist(id) {
+  $("#error").textContent = "";
+  results.innerHTML = `<p class="empty">Chargement de la discographie…</p>`;
+  try {
+    const a = await getJSON(`/api/artists/${id}`);
+    results.innerHTML = `
+      ${lastSearch ? `<button class="back">← Résultats</button>` : ""}
+      <div class="artist-head"><img alt="" ${a.picture ? `src="${esc(a.picture)}"` : ""}>
+        <h2>${esc(a.name)}</h2>${dlButton(`deezer:artist:${a.id}`, "Toute la discographie")}</div>
+      <h3>${a.albums.length} sortie(s)</h3>
+      <div class="albums">${a.albums.map(al => albumCard(al, false)).join("")}</div>`;
+  } catch (err) {
+    $("#error").textContent = err.message;
+    if (lastSearch) renderSearch(lastSearch);
+  }
+}
+
+results.addEventListener("click", async e => {
+  const artist = e.target.closest(".artist");
+  if (artist) return showArtist(artist.dataset.id);
+  if (e.target.closest(".back")) return renderSearch(lastSearch);
+  const btn = e.target.closest(".dl-ref");
+  if (!btn || btn.disabled) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  $("#error").textContent = "";
+  try {
+    await startJob(btn.dataset.ref);
+    btn.textContent = "Ajouté ✓";
+  } catch (err) {
+    $("#error").textContent = err.message;
+    btn.disabled = false; btn.textContent = label;
+  }
+});
 
 function poll(id) {
   if (polling.has(id)) return;

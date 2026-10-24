@@ -9,17 +9,15 @@ from __future__ import annotations
 
 import re
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import httpx
 from mutagen.id3 import APIC, ID3, TALB, TCON, TDRC, TPE2, TPOS, TRCK, ID3NoHeaderError
 from mutagen.mp3 import MP3
 
+from . import deezer
 from .downloader import _norm, _similar
-from .spotify import USER_AGENT
 
 # champ → trame ID3 ; « cover » correspond à la trame APIC
 FRAMES = {"album": TALB, "album_artist": TPE2, "track": TRCK, "disc": TPOS, "year": TDRC, "genre": TCON}
@@ -30,50 +28,6 @@ _FILENAME_RE = re.compile(r"^(?:\d+\s*-\s*)?(.+?)\s+-\s+(.+)$")
 
 class Busy(Exception):
     pass
-
-
-class DeezerError(Exception):
-    pass
-
-
-class Deezer:
-    """API publique Deezer, sans clé. Quota : 50 requêtes / 5 s, on reste en dessous."""
-    BASE = "https://api.deezer.com"
-    MIN_INTERVAL = 0.12
-
-    def __init__(self) -> None:
-        self.http = httpx.Client(timeout=20, headers={"User-Agent": USER_AGENT})
-        self._rate_lock = threading.Lock()
-        self._next = 0.0
-        self._albums: dict[int, dict] = {}
-
-    def get(self, path: str, **params) -> dict:
-        for _ in range(5):
-            with self._rate_lock:
-                wait = self._next - time.monotonic()
-                if wait > 0:
-                    time.sleep(wait)
-                self._next = time.monotonic() + self.MIN_INTERVAL
-            data = self.http.get(self.BASE + path, params=params or None).raise_for_status().json()
-            err = data.get("error") if isinstance(data, dict) else None
-            if not err:
-                return data
-            if err.get("code") == 4:  # quota dépassé
-                time.sleep(5)
-                continue
-            raise DeezerError(err.get("message") or "Erreur Deezer")
-        raise DeezerError("Trop de requêtes vers Deezer.")
-
-    def search(self, query: str) -> list[dict]:
-        return self.get("/search", q=query, limit=10).get("data") or []
-
-    def track(self, track_id: int) -> dict:
-        return self.get(f"/track/{track_id}")
-
-    def album(self, album_id: int) -> dict:
-        if album_id not in self._albums:
-            self._albums[album_id] = self.get(f"/album/{album_id}")
-        return self._albums[album_id]
 
 
 @dataclass
@@ -119,7 +73,7 @@ class Library:
     def __init__(self, root: Path, workers: int = 4) -> None:
         self.root = root
         self.workers = workers
-        self.deezer = Deezer()
+        self.deezer = deezer.client
         self.status = "idle"  # idle | scanning | ready | applying
         self.items: list[Item] = []
         self.done = 0

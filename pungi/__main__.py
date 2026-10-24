@@ -1,4 +1,4 @@
-"""Lancement : python -m pungi [--port 8000] [--no-browser]"""
+"""Lancement : python -m pungi [--port 8001] [--no-browser]"""
 
 import argparse
 import os
@@ -20,7 +20,7 @@ def load_dotenv(path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pungi", description="Télécharge un lien Spotify en MP3.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=8001)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 

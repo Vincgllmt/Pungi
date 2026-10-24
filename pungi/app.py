@@ -7,6 +7,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from . import deezer
+from .deezer import DeezerError
 from .jobs import DOWNLOAD_DIR, Job, JobManager
 from .library import Busy, Library
 from .spotify import SpotifyError
@@ -42,11 +44,31 @@ def index():
 async def create_job(req: JobRequest):
     try:
         job = await run_in_threadpool(manager.create, req.url)
-    except SpotifyError as exc:
+    except (SpotifyError, DeezerError) as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:
-        raise HTTPException(502, f"Impossible de lire ce lien Spotify : {exc}")
+        raise HTTPException(502, f"Impossible de lire ce lien : {exc}")
     return job.to_dict()
+
+
+@app.get("/api/search")
+def search(q: str):
+    if not q.strip():
+        raise HTTPException(400, "Recherche vide.")
+    try:
+        return deezer.search(q.strip())
+    except Exception as exc:
+        raise HTTPException(502, f"Recherche Deezer impossible : {exc}")
+
+
+@app.get("/api/artists/{artist_id}")
+def artist(artist_id: int):
+    try:
+        return deezer.artist_page(artist_id)
+    except DeezerError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"Deezer injoignable : {exc}")
 
 
 @app.get("/api/jobs")
