@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import sys
 import threading
 import webbrowser
 from pathlib import Path
@@ -29,6 +30,8 @@ def main() -> None:
     import uvicorn  # après le .env : la config est lue à l'import de l'app
 
     url = f"http://{args.host}:{args.port}"
+    # sortie redirigée vers un fichier : encodage Windows (cp1252) sans « → »
+    sys.stdout.reconfigure(errors="replace")
     print(f"Pungi → {url}")
     if not args.no_browser:
         threading.Timer(1.2, webbrowser.open, [url]).start()
