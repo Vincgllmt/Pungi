@@ -67,6 +67,15 @@
   #library .chg { white-space: normal; }
   #library .chg em { font-style: normal; color: var(--text); }
   .thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--surface-2); display: block; }
+  #dupes .job-head { grid-template-columns: 1fr; }
+  #dupes .grp { display: block; padding: 0; }
+  #dupes .grp > b { display: block; padding: 10px 16px 4px; font-weight: 600; }
+  #dupes .mem { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center;
+    padding: 6px 16px; cursor: pointer; }
+  #dupes .mem:last-child { padding-bottom: 10px; }
+  #dupes .mem input { width: 16px; height: 16px; margin: 0 auto; accent-color: var(--danger); }
+  #dupes .keep { font-size: 12px; font-weight: 600; color: var(--accent); }
+  #dupes .opt { padding: 0 16px 12px; }
   details { border-top: 1px solid var(--border); }
   summary { padding: 10px 16px; cursor: pointer; color: var(--muted); font-size: 14px; }
   details ol { border-top: 0; }
@@ -129,6 +138,27 @@
     </div>
     <div class="error lib-error" hidden></div>
     <ol class="proposed" hidden></ol>
+    <details class="others" hidden><summary></summary><ol></ol></details>
+  </article>
+  <article class="job" id="dupes">
+    <div class="job-head">
+      <div>
+        <div class="kind">Bibliothèque</div>
+        <h2>Doublons</h2>
+        <div class="sub">Repère les MP3 d'un même titre (titre, artiste et durée). La version d'album est gardée
+          plutôt que le single, puis la plus complète. Rien n'est supprimé : les fichiers cochés sont déplacés
+          dans <code>.doublons</code>. <span class="root"></span></div>
+        <div class="bar" hidden><i></i></div>
+      </div>
+    </div>
+    <label class="all opt"><input type="checkbox" class="singles" checked> Compter comme doublon un single présent dans un album</label>
+    <div class="actions">
+      <span class="stat"></span>
+      <button class="btn small move" hidden>Mettre de côté</button>
+      <button class="btn ghost small scan">Scanner</button>
+    </div>
+    <div class="error dup-error" hidden></div>
+    <ol class="groups" hidden></ol>
     <details class="others" hidden><summary></summary><ol></ol></details>
   </article>
   <section id="jobs"></section>
@@ -448,6 +478,121 @@ function renderLibrary(s) {
   $("ol", det).innerHTML = others.map(it => `<li><div class="t"><b>${esc(it.path)}</b>
     <span class="err">${esc(it.error)}</span></div></li>`).join("");
 }
+
+// ------------------------------------------------------------------ doublons
+const dup = $("#dupes");
+const mb = n => `${(n / 1048576).toFixed(1)} Mo`;
+let dupPoll = null;
+let dupState = null;
+
+try { $(".singles", dup).checked = localStorage.getItem("pungi.dupSingles") !== "0"; } catch {}
+
+async function dupAction(url, body) {
+  $(".dup-error", dup).hidden = true;
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                               body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json();
+  if (!r.ok) { $(".dup-error", dup).textContent = data.detail || "Erreur inconnue"; $(".dup-error", dup).hidden = false; }
+  else renderDupes(data);
+  dupTick();
+}
+
+$(".scan", dup).addEventListener("click", () => dupAction("/api/duplicates/scan"));
+$(".move", dup).addEventListener("click", () => {
+  const paths = [...dup.querySelectorAll(".groups input:checked")].map(i => i.value);
+  if (paths.length) dupAction("/api/duplicates/move", { paths });
+});
+$(".singles", dup).addEventListener("change", e => {
+  try { localStorage.setItem("pungi.dupSingles", e.target.checked ? "1" : "0"); } catch {}
+  if (dupState) renderDupes(dupState);
+});
+$(".groups", dup).addEventListener("change", e => {
+  // au moins un exemplaire de chaque titre reste en place
+  const grp = e.target.closest(".grp");
+  const boxes = [...grp.querySelectorAll("input")];
+  if (e.target.checked && boxes.every(i => i.checked)) e.target.checked = false;
+  updateMove();
+});
+
+function updateMove() {
+  const n = dup.querySelectorAll(".groups input:checked").length;
+  $(".move", dup).textContent = `Mettre de côté (${n})`;
+  $(".move", dup).disabled = n === 0;
+}
+
+function dupTick() {
+  clearTimeout(dupPoll);
+  dupPoll = setTimeout(async () => {
+    const state = await (await fetch("/api/duplicates")).json();
+    if (state.status === "scanning" || state.status === "moving") { renderDupes(state); dupTick(); }
+    else renderDupes(await (await fetch("/api/duplicates?groups=true")).json());
+  }, 600);
+}
+
+// sans l'option, un single est écarté du groupe dès qu'une version d'album y figure
+function visibleGroups(groups) {
+  if ($(".singles", dup).checked) return groups;
+  return groups.map(g => {
+    const files = g.files.some(f => !f.single) ? g.files.filter(f => !f.single) : g.files;
+    return { ...g, files };
+  }).filter(g => g.files.filter(f => f.status !== "error").length > 1);
+}
+
+function renderDupes(s) {
+  const busy = s.status === "scanning" || s.status === "moving";
+  $(".root", dup).textContent = `Dossier : ${s.root}`;
+  $(".bar", dup).hidden = !busy;
+  $(".bar > i", dup).style.width = (s.total ? s.done / s.total * 100 : 0).toFixed(1) + "%";
+  $(".scan", dup).disabled = busy;
+  $(".scan", dup).textContent = s.status === "idle" ? "Scanner" : "Relancer le scan";
+  if (s.error) { $(".dup-error", dup).textContent = s.error; $(".dup-error", dup).hidden = false; }
+
+  if (busy) {
+    $(".stat", dup).textContent = `${s.status === "scanning" ? "Analyse" : "Déplacement"} : ${s.done}/${s.total}`;
+    $(".move", dup).hidden = true;
+    return;
+  }
+  if (s.status === "idle" || !s.groups) { $(".stat", dup).textContent = ""; return; }
+  dupState = s;
+
+  const groups = visibleGroups(s.groups);
+  const pending = groups.filter(g => g.files.filter(f => f.status === "ok").length > 1);
+  const parts = [`${pending.length} titre(s) en double`];
+  if (s.moved) parts.push(`${s.moved} fichier(s) déplacé(s) dans ${s.trash}`);
+  $(".stat", dup).textContent = parts.join(" · ");
+
+  const ol = $(".groups", dup);
+  ol.hidden = !groups.length;
+  ol.innerHTML = groups.map(g => {
+    const head = g.files.find(f => f.path === g.keep) || g.files[0];
+    return `<li class="grp"><b>${esc(head.title)} — ${esc(head.artists.join(", "))}</b>${g.files.map(f => {
+      const where = f.single ? (f.album && f.album !== f.title ? `Single · ${f.album}` : "Single")
+                             : `${f.compilation ? "Compilation" : "Album"} · ${f.album}`;
+      const meta = [where, f.year, `${f.bitrate} kbps`, dur(f.duration * 1000), mb(f.size), !f.cover && "sans pochette"].filter(Boolean);
+      const box = f.status === "moved" ? `<span class="ok" title="Déplacé">✓</span>`
+        : f.status === "error" ? `<span class="ko" title="Échec">✕</span>`
+        : `<input type="checkbox" value="${esc(f.path)}" ${f.path === g.keep ? "" : "checked"}>`;
+      return `<label class="mem">${box}
+        <div class="t"><b title="${esc(f.path)}">${esc(f.path)}</b><span>${esc(meta.join(" · "))}</span>
+          ${f.error ? `<span class="err">${esc(f.error)}</span>` : ""}</div>
+        ${f.path === g.keep && f.status === "ok" ? `<span class="keep">Gardé</span>` : "<span></span>"}</label>`;
+    }).join("")}</li>`;
+  }).join("");
+
+  $(".move", dup).hidden = !pending.length;
+  updateMove();
+
+  const det = $(".others", dup);
+  det.hidden = !s.unreadable.length;
+  $("summary", det).textContent = `${s.unreadable.length} fichier(s) illisible(s)`;
+  $("ol", det).innerHTML = s.unreadable.map(f => `<li><div class="t"><b>${esc(f.path)}</b>
+    <span class="err">${esc(f.error)}</span></div></li>`).join("");
+}
+
+fetch("/api/duplicates?groups=true").then(r => r.json()).then(s => {
+  renderDupes(s);
+  if (s.status === "scanning" || s.status === "moving") dupTick();
+});
 
 fetch("/api/library?items=true").then(r => r.json()).then(s => {
   renderLibrary(s);

@@ -69,17 +69,63 @@ def _missing(tags: ID3) -> set[str]:
     return missing
 
 
-class Library:
+class Task:
+    """Travail de fond avec progression. Un seul à la fois, toutes tâches confondues :
+    on ne déplace pas un fichier pendant qu'on écrit ses tags."""
+
+    _lock = threading.Lock()
+    _running: Task | None = None
+
     def __init__(self, root: Path, workers: int = 4) -> None:
         self.root = root
         self.workers = workers
-        self.deezer = deezer.client
-        self.status = "idle"  # idle | scanning | ready | applying
-        self.items: list[Item] = []
+        self.status = "idle"
         self.done = 0
         self.total = 0
         self.error: str | None = None
-        self._lock = threading.Lock()
+
+    def _start(self, status: str, target, *args) -> None:
+        with Task._lock:
+            if Task._running is not None:
+                raise Busy("Un scan ou une mise à jour est déjà en cours.")
+            Task._running = self
+            self.status, self.error = status, None
+        threading.Thread(target=self._run, args=(target, *args), daemon=True,
+                         name=f"pungi-{type(self).__name__.lower()}-{status}").start()
+
+    def _tick(self) -> None:
+        with Task._lock:
+            self.done += 1
+
+    def _run(self, target, *args) -> None:
+        try:
+            target(*args)
+        except Exception as exc:
+            self.error = str(exc) or type(exc).__name__
+        finally:
+            self.status = "ready"
+            with Task._lock:
+                Task._running = None
+
+    def _files(self) -> list[Path]:
+        if not self.root.is_dir():
+            raise FileNotFoundError(f"Dossier introuvable : {self.root}")
+        files = []
+        for p in self.root.rglob("*.mp3"):
+            rel = p.relative_to(self.root)
+            # .zips, .doublons, dossiers cachés et fichiers en cours de conversion
+            if any(part.startswith(".") for part in rel.parts) or p.name.endswith(".part.mp3"):
+                continue
+            files.append(p)
+        return sorted(files, key=lambda p: str(p).lower())
+
+
+class Library(Task):
+    def __init__(self, root: Path, workers: int = 4) -> None:
+        super().__init__(root, workers)
+        self.deezer = deezer.client
+        self.status = "idle"  # idle | scanning | ready | applying
+        self.items: list[Item] = []
 
     def to_dict(self, items: bool = False) -> dict:
         counts: dict[str, int] = {}
@@ -91,42 +137,10 @@ class Library:
             d["items"] = [it.to_dict() for it in self.items]
         return d
 
-    def _start(self, status: str, target, *args) -> None:
-        with self._lock:
-            if self.status in ("scanning", "applying"):
-                raise Busy("Un scan ou une mise à jour est déjà en cours.")
-            self.status, self.error = status, None
-        threading.Thread(target=self._run, args=(target, *args), daemon=True,
-                         name=f"pungi-library-{status}").start()
-
-    def _tick(self) -> None:
-        with self._lock:
-            self.done += 1
-
-    def _run(self, target, *args) -> None:
-        try:
-            target(*args)
-        except Exception as exc:
-            self.error = str(exc) or type(exc).__name__
-        finally:
-            self.status = "ready"
-
     # ------------------------------------------------------------------ scan
 
     def scan(self) -> None:
         self._start("scanning", self._scan)
-
-    def _files(self) -> list[Path]:
-        if not self.root.is_dir():
-            raise FileNotFoundError(f"Dossier introuvable : {self.root}")
-        files = []
-        for p in self.root.rglob("*.mp3"):
-            rel = p.relative_to(self.root)
-            # .zips, dossiers cachés et fichiers en cours de conversion
-            if any(part.startswith(".") for part in rel.parts) or p.name.endswith(".part.mp3"):
-                continue
-            files.append(p)
-        return sorted(files, key=lambda p: str(p).lower())
 
     def _scan(self) -> None:
         files = self._files()

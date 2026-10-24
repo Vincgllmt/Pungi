@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from . import deezer
 from .deezer import DeezerError
+from .duplicates import Duplicates
 from .jobs import DOWNLOAD_DIR, Job, JobManager
 from .library import Busy, Library
 from .spotify import SpotifyError
@@ -18,6 +19,7 @@ STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="Pungi")
 manager = JobManager()
 library = Library(DOWNLOAD_DIR)
+duplicates = Duplicates(DOWNLOAD_DIR)
 
 
 class JobRequest(BaseModel):
@@ -127,3 +129,26 @@ def apply_library(req: ApplyRequest):
     except Busy as exc:
         raise HTTPException(409, str(exc))
     return library.to_dict()
+
+
+@app.get("/api/duplicates")
+def get_duplicates(groups: bool = False):
+    return duplicates.to_dict(groups)
+
+
+@app.post("/api/duplicates/scan")
+def scan_duplicates():
+    try:
+        duplicates.scan()
+    except Busy as exc:
+        raise HTTPException(409, str(exc))
+    return duplicates.to_dict()
+
+
+@app.post("/api/duplicates/move")
+def move_duplicates(req: ApplyRequest):
+    try:
+        duplicates.move(req.paths)
+    except Busy as exc:
+        raise HTTPException(409, str(exc))
+    return duplicates.to_dict()

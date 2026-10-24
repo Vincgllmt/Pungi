@@ -41,6 +41,14 @@ La carte **Bibliothèque** de la page scanne tous les MP3 de `PUNGI_DOWNLOAD_DIR
 - Si le titre est trouvé sur un autre album que celui du fichier, seul le genre est proposé (pour ne pas mélanger piste, année ou pochette de deux éditions).
 - Les fichiers dont la correspondance n'est pas fiable sont listés à part, sans proposition.
 
+## Doublons
+
+La carte **Doublons** repère les MP3 d'un même titre : titre identique (mentions « Remastered », « Album Version »… ignorées), au moins un artiste en commun et durée proche (±4 s ou 3 %). Les versions live, remix, instrumentales, etc. ne sont pas confondues avec l'original.
+
+- Pour chaque titre en double, une version est **gardée** : celle d'un album plutôt que d'un single (hors compilation), puis le meilleur débit, la pochette et les tags les plus complets. Les autres sont cochées, on ajuste puis « Mettre de côté ».
+- Un single est un fichier sans album, dont l'album porte le nom du titre, contient « Single » ou est noté piste 1/1. L'option « Compter comme doublon un single présent dans un album » (activée par défaut) peut être décochée pour ne pas les signaler.
+- Rien n'est supprimé : les fichiers écartés sont déplacés dans `.doublons/` (même arborescence) à la racine du dossier, ignoré par les scans. Les dossiers devenus vides sont supprimés. Au moins un exemplaire de chaque titre reste toujours en place.
+
 ## Limites
 
 | Sans clés API | Avec clés API |
@@ -62,6 +70,7 @@ pungi/
   downloader.py  recherche YouTube, téléchargement, conversion, tags
   jobs.py        file de téléchargements parallèles, ZIP
   library.py     scan de la bibliothèque et complétion des tags via Deezer
+  duplicates.py  détection des doublons et mise de côté dans .doublons/
   app.py         API HTTP (FastAPI)
   static/        interface web
 ```
