@@ -4,14 +4,37 @@ Cherche un artiste, un album ou un titre, ou colle un lien Spotify (titre, album
 
 ## Lancer
 
-Double-clique sur `pungi.bat`. Au premier lancement, il crée l'environnement Python et installe les dépendances. Ensuite il ouvre http://127.0.0.1:8001.
+La première fois, double-clique sur `pungi.bat` : il crée l'environnement Python, installe les dépendances et ajoute un raccourci **Pungi** (avec son icône) sur le bureau et dans le menu Démarrer. Ensuite, le raccourci suffit.
 
-Ou à la main :
+Pungi s'ouvre dans **sa propre fenêtre**, sans console (la sortie va dans `pungi.log`). Fermer la fenêtre arrête Pungi ; si des téléchargements sont en cours, une confirmation est demandée. Relancer Pungi alors qu'il tourne déjà ouvre simplement une fenêtre de plus, et si le port 8001 est pris par autre chose, un port libre est choisi.
+
+**yt-dlp se met à jour tout seul** : à chaque démarrage, Pungi compare sa version à la dernière publiée (une requête, moins d'une seconde) et ne lance pip que s'il y a plus récent (une vingtaine de secondes, affichées dans la fenêtre).
+
+### Linux
+
+```sh
+./pungi.sh
+```
+
+Même principe que `pungi.bat` : au premier lancement, il crée l'environnement Python, installe les dépendances et ajoute **Pungi** au menu des applications (et sur le bureau s'il existe). Il faut `python3` avec le module `venv` (paquet `python3-venv` sur Debian/Ubuntu).
+
+La fenêtre utilise GTK et WebKit du système (l'environnement Python est créé avec `--system-site-packages` pour les voir) :
+
+| Distribution | Paquets |
+|---|---|
+| Debian, Ubuntu | `sudo apt install python3-gi gir1.2-webkit2-4.1` |
+| Fedora | `sudo dnf install python3-gobject webkit2gtk4.1` |
+| Arch | `sudo pacman -S python-gobject webkit2gtk-4.1` |
+
+Sans eux, Pungi s'ouvre dans le navigateur. Il continue alors de tourner après la fermeture de l'onglet : on l'arrête avec Ctrl+C dans le terminal, ou `pkill -f "python -m pungi"` s'il a été lancé par le raccourci. Lancé par le raccourci, la sortie va dans `pungi.log`.
+
+À la main :
 
 ```sh
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python -m pungi            # --port 8001 --no-browser
+.venv\Scripts\python -m pungi            # --port 8001, --browser (onglet du navigateur), --no-browser (serveur seul), --no-update
+.venv\Scripts\python -m pungi --shortcut # recrée les raccourcis (après avoir déplacé le dossier, par exemple)
 ```
 
 Aucun outil externe n'est nécessaire : ffmpeg est fourni par `imageio-ffmpeg`. Node.js est utilisé par yt-dlp s'il est installé.
