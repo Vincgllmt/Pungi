@@ -17,7 +17,7 @@ from mutagen.id3 import APIC, ID3, TALB, TCON, TDRC, TPE2, TPOS, TRCK, ID3NoHead
 from mutagen.mp3 import MP3
 
 from . import deezer
-from .downloader import _norm, _similar
+from .downloader import _similar
 
 # champ → trame ID3 ; « cover » correspond à la trame APIC
 FRAMES = {"album": TALB, "album_artist": TPE2, "track": TRCK, "disc": TPOS, "year": TDRC, "genre": TCON}
@@ -177,7 +177,7 @@ class Library(Task):
             it.status, it.error = "unmatched", "Titre inconnu (ni tag ni nom de fichier exploitable)."
             return
 
-        hits = self._find(it, length)
+        hits = deezer.find(it.title, it.artists, it.album, length)
         if not hits:
             it.status, it.error = "unmatched", "Aucune correspondance fiable sur Deezer."
             return
@@ -215,34 +215,6 @@ class Library(Task):
         if not it.changes:
             it.error = ("Deezer ne connaît pas les tags manquants de ce titre." if same_album else
                         f"Trouvé sur un autre album (« {album.get('title')} ») : rien à compléter sans risque.")
-
-    def _find(self, it: Item, length: float) -> list[dict]:
-        """Résultats Deezer au titre et à l'artiste concordants et de durée compatible, du meilleur au moins bon."""
-        main = it.artists[0]
-        queries = [f"{main} {it.title}"]
-        if _norm(f"{main} {it.title}") != f"{main} {it.title}".lower():
-            queries.append(_norm(f"{main} {it.title}"))
-        for q in queries:
-            scored = []
-            for r in self.deezer.search(q):
-                title_sim = max(_similar(r.get("title", ""), it.title), _similar(r.get("title_short", ""), it.title))
-                name = (r.get("artist") or {}).get("name", "")
-                artist_ok = any(_norm(a) and (_norm(a) in _norm(name) or _norm(name) in _norm(a))
-                                for a in it.artists) or _similar(name, main) > 0.6
-                if title_sim < 0.8 or not artist_ok:
-                    continue
-                score = title_sim * 2
-                if length and r.get("duration"):
-                    diff = abs(r["duration"] - length)
-                    if diff > max(10, length * 0.07):
-                        continue
-                    score -= diff / 30
-                if it.album and _similar(it.album, (r.get("album") or {}).get("title", "")) >= 0.8:
-                    score += 1
-                scored.append((score, r))
-            if scored:
-                return [r for _, r in sorted(scored, key=lambda x: -x[0])]
-        return []
 
     # ---------------------------------------------------------------- application
 

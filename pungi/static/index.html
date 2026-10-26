@@ -98,6 +98,18 @@
   .artist-head img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
   .artist-head h2 { margin: 0; font-size: 22px; flex: 1; min-width: 0; }
   .back { background: none; color: var(--muted); padding: 0; font-weight: 500; margin-top: 14px; }
+  #import .job-head { grid-template-columns: 1fr; }
+  #import input[type=file] { display: none; }
+  #import li { grid-template-columns: 28px 1fr auto; cursor: pointer; }
+  #import li input { width: 16px; height: 16px; margin: 0 auto; accent-color: var(--accent); }
+  #import select { font: inherit; font-size: 13px; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 3px 6px; max-width: 100%; }
+  #import .extra { padding: 4px 16px 14px; border-top: 1px solid var(--border); }
+  #import .extra h3 { margin: 12px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); font-weight: 600; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font-weight: 500; font-size: 13px; padding: 5px 11px; border-radius: 99px; background: var(--surface-2);
+    color: var(--text); border: 1px solid var(--border); white-space: normal; text-align: left; }
   label.all { font-size: 14px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
   @media (max-width: 560px) {
     main { padding-top: 28px; }
@@ -120,6 +132,27 @@
   </form>
   <div class="error" id="error"></div>
   <section id="results" hidden></section>
+  <article class="job" id="import">
+    <div class="job-head">
+      <div>
+        <div class="kind">Spotify</div>
+        <h2>Importer mes données</h2>
+        <div class="sub">Choisis l'archive <code>.zip</code> (ou les fichiers <code>.json</code>) de l'export Spotify
+          « Télécharger vos données ». Les titres sont lus dans les fichiers, sans requête à Spotify ;
+          les infos manquantes viennent de Deezer. Les titres déjà présents dans le dossier sont ignorés.</div>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="stat"></span>
+      <label class="all" hidden><input type="checkbox"> Tout cocher</label>
+      <button class="btn small start" hidden>Télécharger</button>
+      <label class="btn ghost small pick"><span>Choisir les fichiers</span>
+        <input type="file" multiple accept=".zip,.json,application/zip,application/json"></label>
+    </div>
+    <div class="error imp-error" hidden></div>
+    <ol class="sources" hidden></ol>
+    <div class="extra" hidden></div>
+  </article>
   <article class="job" id="library">
     <div class="job-head">
       <div>
@@ -170,7 +203,7 @@ const jobsEl = $("#jobs");
 const polling = new Map();
 const KIND = { track: "Titre", album: "Album", playlist: "Playlist", artist: "Artiste" };
 const STATUS = { pending: "En attente", searching: "Recherche…", downloading: "Téléchargement",
-                 converting: "Conversion", done: "OK", error: "Échec" };
+                 converting: "Conversion", done: "OK", error: "Échec", cancelled: "Annulé" };
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const dur = ms => ms ? `${Math.floor(ms / 60000)}:${String(Math.round(ms / 1000) % 60).padStart(2, "0")}` : "";
@@ -317,7 +350,7 @@ function poll(id) {
     const job = await r.json();
     render(job);
     if (job.finished) polling.delete(id);
-    else polling.set(id, setTimeout(tick, 800));
+    else polling.set(id, setTimeout(tick, job.total > 300 ? 3000 : 800));
   };
   polling.set(id, setTimeout(tick, 400));
 }
@@ -342,10 +375,15 @@ function render(job) {
         : "Sans clés API Spotify, seuls les 100 premiers titres de la playlist sont récupérés."} Voir .env.example.</div>` : ""}
       <div class="actions">
         <span class="stat"></span>
+        <button class="btn ghost small cancel" hidden>Annuler</button>
         <button class="btn ghost small retry" hidden>Réessayer les échecs</button>
         <a class="btn small zip" hidden>Tout télécharger (.zip)</a>
       </div>
       <ol></ol>`;
+    $(".cancel", el).addEventListener("click", async e => {
+      e.target.disabled = true;
+      await fetch(`/api/jobs/${job.id}/cancel`, { method: "POST" });
+    });
     $(".retry", el).addEventListener("click", async () => {
       await fetch(`/api/jobs/${job.id}/retry`, { method: "POST" });
       poll(job.id);
@@ -354,19 +392,23 @@ function render(job) {
   }
 
   $(".bar > i", el).style.width = (job.progress * 100).toFixed(1) + "%";
+  const extra = [job.owned && `${job.owned} déjà présent(s)`, job.failed && `${job.failed} échec(s)`,
+                 job.cancelled && `${job.cancelled} annulé(s)`].filter(Boolean).map(x => ` · ${x}`).join("");
   $(".stat", el).textContent = job.finished
-    ? `Terminé · ${job.done}/${job.total}${job.failed ? ` · ${job.failed} échec(s)` : ""} · ${job.folder}`
-    : `${job.done}/${job.total} prêtes${job.failed ? ` · ${job.failed} échec(s)` : ""}`;
+    ? `Terminé · ${job.done}/${job.total}${extra} · ${job.folder}`
+    : `${job.done}/${job.total} prêtes${extra}`;
   const zip = $(".zip", el);
   zip.hidden = !(job.finished && job.done > 0 && job.total > 1);
   zip.href = `/api/jobs/${job.id}/zip`;
-  $(".retry", el).hidden = !(job.finished && job.failed > 0);
+  $(".retry", el).hidden = !(job.finished && (job.failed > 0 || job.cancelled > 0));
+  $(".retry", el).textContent = job.failed ? "Réessayer les échecs" : "Reprendre";
+  $(".cancel", el).hidden = job.finished;
 
   $("ol", el).innerHTML = job.tracks.map(t => {
     let st;
-    if (t.status === "done") st = `<a class="dl" href="/api/jobs/${job.id}/tracks/${t.index}" title="Enregistrer le MP3">MP3 ↓</a>`;
+    if (t.status === "done") st = `<a class="dl" href="/api/jobs/${job.id}/tracks/${t.index}" title="Enregistrer le MP3">${t.source === "owned" ? "Déjà là ↓" : "MP3 ↓"}</a>`;
     else if (t.status === "error") st = `<span class="ko">${STATUS.error}</span>`;
-    else if (t.status === "pending") st = STATUS.pending;
+    else if (t.status === "pending" || t.status === "cancelled") st = STATUS[t.status];
     else st = `${STATUS[t.status]} <span class="mini"><i style="width:${(t.progress * 100).toFixed(0)}%"></i></span>`;
     return `<li>
       <span class="n">${t.index + 1}</span>
@@ -376,6 +418,138 @@ function render(job) {
       <span class="st">${st}</span></li>`;
   }).join("");
 }
+
+// ------------------------------------------------------------------ import Spotify
+const imp = $("#import");
+const fmt = n => n.toLocaleString("fr-FR");
+
+function impError(msg) {
+  $(".imp-error", imp).textContent = msg || "";
+  $(".imp-error", imp).hidden = !msg;
+}
+
+$(".pick input", imp).addEventListener("change", async e => {
+  const files = [...e.target.files];
+  e.target.value = "";
+  if (!files.length) return;
+  impError();
+  $(".stat", imp).textContent = "Lecture de l'export…";
+  try {
+    const zip = files.find(f => /\.zip$/i.test(f.name));
+    const init = zip
+      ? { headers: { "Content-Type": "application/zip" }, body: zip }
+      : { headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: Object.fromEntries(await Promise.all(
+            files.filter(f => /\.json$/i.test(f.name)).map(async f => [f.name, await f.text()]))) }) };
+    const r = await fetch("/api/import", { method: "POST", ...init });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Erreur inconnue");
+    renderImport(data);
+  } catch (err) {
+    $(".stat", imp).textContent = "";
+    impError(err.message);
+  }
+});
+
+function renderImport(d) {
+  if (!d) return;
+  const h = d.history || {};
+  const thresholds = Object.keys(h).filter(n => h[n] > 0);
+  const rows = d.sources.map(s => `<li data-count="${s.count}"><input type="checkbox" value="${esc(s.id)}">
+      <div class="t"><b>${esc(s.name)}</b><span>${s.kind === "liked" ? "Titres likés" : "Playlist"} · ${fmt(s.count)} titres</span></div>
+      <span></span></li>`);
+  if (thresholds.length) rows.push(`<li><input type="checkbox" value="history">
+      <div class="t"><b>Les plus écoutés</b><span>D'après l'historique d'écoute (écoutes de 30 s ou plus)</span></div>
+      <select class="plays">${thresholds.map(n => `<option value="${n}" data-count="${h[n]}" ${n === "10" ? "selected" : ""}>
+        ${n}+ écoutes · ${fmt(h[n])} titres</option>`).join("")}</select></li>`);
+  const ol = $(".sources", imp);
+  ol.innerHTML = rows.join("");
+  ol.hidden = !rows.length;
+  $(".start", imp).hidden = $(".all", imp).hidden = !rows.length;
+  $(".pick span", imp).textContent = "Changer de fichiers";
+  $(".stat", imp).textContent = `${d.sources.length} source(s) trouvée(s)`;
+
+  const extra = $(".extra", imp);
+  extra.innerHTML = `
+    ${d.albums.length ? `<h3>Albums sauvegardés</h3><div class="chips">${d.albums.map(a =>
+      `<button class="chip dl-uri" data-uri="${esc(a.uri)}" title="Télécharger l'album">${esc(a.name)} · ${esc(a.artist)}</button>`).join("")}</div>` : ""}
+    ${d.artists.length ? `<h3>Artistes suivis</h3><div class="chips">${d.artists.map(a =>
+      `<button class="chip find-artist" data-name="${esc(a.name)}" title="Chercher sa discographie">${esc(a.name)}</button>`).join("")}</div>` : ""}`;
+  extra.hidden = !d.albums.length && !d.artists.length;
+  updateImport();
+}
+
+function importSelection() {
+  const checked = [...imp.querySelectorAll(".sources input:checked")];
+  const sel = $(".plays", imp);
+  const count = checked.reduce((n, i) => n + Number(i.value === "history"
+    ? sel.selectedOptions[0].dataset.count : i.closest("li").dataset.count), 0);
+  return { ids: checked.map(i => i.value), count, minPlays: sel ? Number(sel.value) : 0 };
+}
+
+function updateImport() {
+  const boxes = [...imp.querySelectorAll(".sources input")];
+  const { ids, count } = importSelection();
+  $(".start", imp).textContent = `Télécharger (${fmt(count)} titres)`;
+  $(".start", imp).disabled = !ids.length;
+  $(".all input", imp).checked = boxes.length > 0 && ids.length === boxes.length;
+}
+
+$(".sources", imp).addEventListener("click", e => {
+  const li = e.target.closest("li");
+  if (!li || e.target.closest("input, select")) return;
+  const box = $("input", li);
+  box.checked = !box.checked;
+  updateImport();
+});
+$(".sources", imp).addEventListener("change", updateImport);
+$(".all input", imp).addEventListener("change", e => {
+  imp.querySelectorAll(".sources input").forEach(i => { i.checked = e.target.checked; });
+  updateImport();
+});
+
+$(".start", imp).addEventListener("click", async e => {
+  const { ids, minPlays } = importSelection();
+  if (!ids.length) return;
+  impError();
+  e.target.disabled = true;
+  try {
+    const r = await fetch("/api/import/jobs", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                 body: JSON.stringify({ sources: ids, min_plays: minPlays }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || "Erreur inconnue");
+    data.forEach(job => { render(job); poll(job.id); });
+    imp.querySelectorAll(".sources input").forEach(i => { i.checked = false; });
+    jobsEl.scrollIntoView({ behavior: "smooth" });
+  } catch (err) {
+    impError(err.message);
+  } finally {
+    updateImport();
+  }
+});
+
+$(".extra", imp).addEventListener("click", async e => {
+  const artist = e.target.closest(".find-artist");
+  if (artist) {
+    $("#url").value = artist.dataset.name; updateGo();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    return search(artist.dataset.name);
+  }
+  const btn = e.target.closest(".dl-uri");
+  if (!btn || btn.disabled) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "…";
+  impError();
+  try {
+    await startJob(btn.dataset.uri);
+    btn.textContent = "✓ " + label;
+  } catch (err) {
+    impError(err.message);
+    btn.disabled = false; btn.textContent = label;
+  }
+});
+
+fetch("/api/import").then(r => r.json()).then(renderImport);
 
 // ------------------------------------------------------------------ bibliothèque
 const lib = $("#library");

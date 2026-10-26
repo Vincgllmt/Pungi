@@ -24,6 +24,24 @@ Les métadonnées viennent alors de Deezer : album, artiste de l'album, numéro 
 
 Coller un lien Spotify lance directement le téléchargement, comme avant.
 
+## Importer ses données Spotify
+
+Sur Spotify : Paramètres du compte → Confidentialité → « Télécharger vos données » (« Données de compte »). Dans la carte **Importer mes données**, choisis l'archive `.zip` reçue, ou les fichiers `.json` qu'elle contient. Pungi propose alors :
+
+- les **titres likés** et chaque **playlist** (une case par source, un dossier par source) ;
+- **les plus écoutés**, tirés de l'historique d'écoute (écoutes de 30 s ou plus), avec un seuil de 3, 5, 10 ou 20 écoutes ;
+- les **albums sauvegardés** (un clic les télécharge) et les **artistes suivis** (un clic lance la recherche de leur discographie).
+
+Ménager Spotify :
+
+- Les titres sont lus dans les fichiers de l'export : **aucune requête à Spotify** pour les lister.
+- Il leur manque durée, pochette, année et numéro de piste : Pungi les cherche sur **Deezer** au moment de télécharger chaque titre (environ 3 sur 4 y sont trouvés sur le même album). Spotify n'est interrogé que pour les autres, une requête à la fois.
+- Toutes les requêtes Spotify passent par un limiteur commun (une toutes les 0,5 s). Si Spotify répond 429, tout s'arrête le temps demandé ; si l'attente dépasse 2 min, Pungi n'insiste pas et télécharge sans ces infos.
+
+Les titres déjà présents dans le dossier de musique (même titre et même artiste, d'après les tags ou le nom du fichier) sont **ignorés** et marqués « Déjà là ». Un gros import peut être **annulé** (les titres en cours se terminent), puis repris.
+
+L'export contient des données personnelles : le dossier `Spotify Account Data/` est ignoré par git.
+
 ## Fonctionnement
 
 1. **Métadonnées Spotify** : elles viennent des pages « embed » publiques, donc sans aucune clé. Si `SPOTIFY_CLIENT_ID` et `SPOTIFY_CLIENT_SECRET` sont définis dans `.env`, Pungi passe par l'API officielle.

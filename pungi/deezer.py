@@ -1,7 +1,8 @@
 """API publique Deezer, sans clé : recherche (titres, albums, artistes) et métadonnées
 complètes d'un titre, d'un album ou de la discographie d'un artiste.
 
-Sert aussi à la bibliothèque pour compléter les tags.
+Sert aussi à la bibliothèque pour compléter les tags, et à l'import Spotify pour compléter
+les pistes de l'export (qui n'ont ni durée, ni pochette, ni année).
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import time
 
 import httpx
 
+from .downloader import _norm, _similar
 from .spotify import USER_AGENT, Collection, Track
 
 _REF_RE = re.compile(r"^deezer:(track|album|artist):(\d+)$")
@@ -111,6 +113,65 @@ def artist_page(artist_id: int) -> dict:
     ar = client.artist(artist_id)
     albums = [_album_summary(a | {"artist": ar}) for a in client.artist_albums(artist_id)]
     return {"id": ar["id"], "name": ar["name"], "picture": ar.get("picture_medium"), "albums": albums}
+
+
+# --------------------------------------------------------------------------- correspondance
+
+def find(title: str, artists: list[str], album: str = "", length: float = 0) -> list[dict]:
+    """Résultats Deezer au titre et à l'artiste concordants et de durée compatible
+    (`length` en secondes, 0 si inconnue), du meilleur au moins bon."""
+    main = artists[0] if artists else ""
+    queries = [f"{main} {title}"]
+    if _norm(f"{main} {title}") != f"{main} {title}".lower():
+        queries.append(_norm(f"{main} {title}"))
+    for q in queries:
+        scored = []
+        for r in client.search(q):
+            title_sim = max(_similar(r.get("title", ""), title), _similar(r.get("title_short", ""), title))
+            name = (r.get("artist") or {}).get("name", "")
+            artist_ok = any(_norm(a) and (_norm(a) in _norm(name) or _norm(name) in _norm(a))
+                            for a in artists) or _similar(name, main) > 0.6
+            if title_sim < 0.8 or not artist_ok:
+                continue
+            score = title_sim * 2
+            if length and r.get("duration"):
+                diff = abs(r["duration"] - length)
+                if diff > max(10, length * 0.07):
+                    continue
+                score -= diff / 30
+            if album and _similar(album, (r.get("album") or {}).get("title", "")) >= 0.8:
+                score += 1
+            scored.append((score, r))
+        if scored:
+            return [r for _, r in sorted(scored, key=lambda x: -x[0])]
+    return []
+
+
+def enrich(track: Track) -> bool:
+    """Complète une piste connue seulement par titre / artiste / album (export Spotify).
+    Durée et artistes viennent du titre trouvé ; pochette, année, piste et artiste de
+    l'album seulement si c'est le même album. Renvoie True si l'album concorde."""
+    hits = find(track.title, track.artists, track.album or "", track.duration_ms / 1000)
+    if not hits:
+        return False
+    hit = hits[0]
+    details = client.track(hit["id"])
+    track.duration_ms = track.duration_ms or (hit.get("duration") or 0) * 1000
+    names = [c["name"] for c in details.get("contributors") or []]
+    if names and any(_norm(a) == _norm(n) for a in track.artists[:1] for n in names):
+        # l'export ne donne que l'artiste principal : on garde son orthographe en tête
+        track.artists = track.artists[:1] + [n for n in names if _norm(n) != _norm(track.artists[0])]
+    track.explicit = track.explicit or details.get("explicit_lyrics", False)
+
+    al = client.album(hit["album"]["id"])
+    if track.album and _similar(track.album, al.get("title", "")) < 0.8:
+        return False
+    track.album = track.album or al.get("title")
+    track.album_artist = track.album_artist or (al.get("artist") or {}).get("name")
+    track.cover_url = track.cover_url or al.get("cover_xl") or al.get("cover_big")
+    track.year = track.year or (details.get("release_date") or al.get("release_date") or "")[:4] or None
+    track.track_number = track.track_number or details.get("track_position")
+    return True
 
 
 # --------------------------------------------------------------------------- collections

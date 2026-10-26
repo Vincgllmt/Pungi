@@ -79,8 +79,8 @@ def safe_name(s: str, maxlen: int = 150) -> str:
     return (s[:maxlen].rstrip() or "sans titre")
 
 
-def track_filename(t: Track) -> str:
-    prefix = f"{t.track_number:02d} - " if t.track_number else ""
+def track_filename(t: Track, numbered: bool = True) -> str:
+    prefix = f"{t.track_number:02d} - " if numbered and t.track_number else ""
     return safe_name(f"{prefix}{t.main_artist} - {t.title}") + ".mp3"
 
 
@@ -196,10 +196,12 @@ class Downloader:
 
     # ---------------------------------------------------------------- téléchargement
 
-    def download(self, t: Track, out_dir: Path, progress: Progress) -> tuple[Path, str]:
-        """Télécharge une piste en MP3 taggé. Renvoie (fichier, url source)."""
+    def download(self, t: Track, out_dir: Path, progress: Progress,
+                 numbered: bool = True) -> tuple[Path, str]:
+        """Télécharge une piste en MP3 taggé. Renvoie (fichier, url source).
+        `numbered` : préfixe le nom du fichier par le numéro de piste (albums)."""
         out_dir.mkdir(parents=True, exist_ok=True)
-        dest = out_dir / track_filename(t)
+        dest = out_dir / track_filename(t, numbered)
         if dest.exists() and dest.stat().st_size > 0:
             progress("done", 1.0)
             return dest, ""

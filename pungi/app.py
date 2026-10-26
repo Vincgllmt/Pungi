@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import deezer
+from . import deezer, spotify_data
 from .deezer import DeezerError
 from .duplicates import Duplicates
 from .jobs import DOWNLOAD_DIR, Job, JobManager
@@ -20,6 +20,7 @@ app = FastAPI(title="Pungi")
 manager = JobManager()
 library = Library(DOWNLOAD_DIR)
 duplicates = Duplicates(DOWNLOAD_DIR)
+export: spotify_data.Export | None = None  # dernier export Spotify importé
 
 
 class JobRequest(BaseModel):
@@ -28,6 +29,11 @@ class JobRequest(BaseModel):
 
 class ApplyRequest(BaseModel):
     paths: list[str]
+
+
+class ImportJobsRequest(BaseModel):
+    sources: list[str]
+    min_plays: int = 0
 
 
 def _job(job_id: str) -> Job:
@@ -86,6 +92,11 @@ def get_job(job_id: str):
 @app.post("/api/jobs/{job_id}/retry")
 def retry(job_id: str):
     return {"retried": manager.retry_failed(_job(job_id))}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel(job_id: str):
+    return {"cancelled": manager.cancel(_job(job_id))}
 
 
 @app.get("/api/jobs/{job_id}/tracks/{index}")
@@ -152,3 +163,38 @@ def move_duplicates(req: ApplyRequest):
     except Busy as exc:
         raise HTTPException(409, str(exc))
     return duplicates.to_dict()
+
+
+@app.get("/api/import")
+def get_import():
+    return export.to_dict() if export else None
+
+
+@app.post("/api/import")
+async def upload_import(request: Request):
+    """Corps : l'archive .zip de l'export, ou {"files": {nom: contenu}} pour des .json."""
+    global export
+    body = await request.body()
+    try:
+        if request.headers.get("content-type", "").startswith("application/zip"):
+            files = spotify_data.read_zip(body)
+        else:
+            files = (await request.json()).get("files") or {}
+        export = await run_in_threadpool(spotify_data.parse, files)
+    except spotify_data.ExportError as exc:
+        raise HTTPException(400, str(exc))
+    except ValueError:
+        raise HTTPException(400, "Fichiers illisibles.")
+    return export.to_dict()
+
+
+@app.post("/api/import/jobs")
+def start_import(req: ImportJobsRequest):
+    if not export:
+        raise HTTPException(409, "Aucun export Spotify importé.")
+    collections = export.collections(req.sources, req.min_plays)
+    if not collections:
+        raise HTTPException(400, "Rien à télécharger dans cette sélection.")
+    manager.owned.reset()  # le dossier a pu changer depuis le dernier import
+    return [manager.add(f"spotify-export:{c.spotify_id}", c, imported=True).to_dict() | {"tracks": []}
+            for c in collections]

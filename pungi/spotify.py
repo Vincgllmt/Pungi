@@ -5,6 +5,9 @@ Deux sources :
   (pas de limite sur la taille des playlists, discographie complète d'un artiste) ;
 - sinon les pages « embed » publiques, sans aucune clé
   (playlists limitées à 100 pistes, artiste = ses 10 titres populaires).
+
+Toutes les requêtes passent par un limiteur commun : Spotify bride vite les rafales
+(429 + Retry-After), et un blocage long ne doit pas figer les téléchargements.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -35,6 +39,39 @@ _NEXT_DATA_RE = re.compile(
 
 class SpotifyError(Exception):
     pass
+
+
+class _Throttle:
+    """Espace les requêtes Spotify (tous threads confondus) et applique les Retry-After."""
+    MIN_INTERVAL = 0.5
+    MAX_WAIT = 120  # au-delà, on abandonne plutôt que de bloquer les threads
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            delay = self._next - time.monotonic()
+            if delay > self.MAX_WAIT:
+                raise SpotifyError(f"Spotify limite les requêtes : réessaie dans {int(delay / 60) + 1} min.")
+            if delay > 0:
+                time.sleep(delay)
+            self._next = time.monotonic() + self.MIN_INTERVAL
+
+    def retry_after(self, r: httpx.Response, attempt: int) -> None:
+        """429 reçu : met en pause toutes les requêtes Spotify."""
+        try:
+            delay = float(r.headers.get("Retry-After", ""))
+        except ValueError:
+            delay = 2.0 * 2 ** attempt
+        with self._lock:
+            self._next = max(self._next, time.monotonic() + delay + 1)
+        if delay > self.MAX_WAIT:
+            raise SpotifyError(f"Spotify limite les requêtes : réessaie dans {int(delay / 60) + 1} min.")
+
+
+_throttle = _Throttle()
 
 
 @dataclass
@@ -90,8 +127,15 @@ def fetch(url: str) -> Collection:
 # --------------------------------------------------------------------------- embed
 
 def _embed_entity(kind: str, sid: str) -> dict:
-    r = httpx.get(f"https://open.spotify.com/embed/{kind}/{sid}",
-                  headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=20)
+    for attempt in range(4):
+        _throttle.wait()
+        r = httpx.get(f"https://open.spotify.com/embed/{kind}/{sid}",
+                      headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=20)
+        if r.status_code != 429:
+            break
+        _throttle.retry_after(r, attempt)
+    else:
+        raise SpotifyError("Trop de requêtes vers Spotify.")
     if r.status_code == 404:
         raise SpotifyError("Contenu Spotify introuvable (privé ou supprimé ?).")
     r.raise_for_status()
@@ -121,8 +165,9 @@ def _split_artists(subtitle: str) -> list[str]:
 
 
 def enrich_from_embed(track: Track) -> None:
-    """Complète pochette / année d'une piste (utile pour playlists et artistes)."""
+    """Complète pochette / année / durée d'une piste (utile pour playlists et artistes)."""
     ent = _embed_entity("track", track.spotify_id)
+    track.duration_ms = track.duration_ms or ent.get("duration", 0)
     track.cover_url = track.cover_url or _best_image(ent)
     track.year = track.year or _year(ent)
     if ent.get("artists"):
@@ -175,6 +220,7 @@ class _Api:
     def _auth(self) -> dict:
         tok = _Api._token
         if not tok or tok[1] < time.time() + 30:
+            _throttle.wait()
             r = self.http.post("https://accounts.spotify.com/api/token",
                                data={"grant_type": "client_credentials"},
                                auth=(os.environ["SPOTIFY_CLIENT_ID"], os.environ["SPOTIFY_CLIENT_SECRET"]))
@@ -185,10 +231,12 @@ class _Api:
 
     def get(self, path: str, **params) -> dict:
         url = path if path.startswith("http") else self.BASE + path
-        for _ in range(5):
-            r = self.http.get(url, params=params or None, headers=self._auth())
+        for attempt in range(5):
+            headers = self._auth()
+            _throttle.wait()
+            r = self.http.get(url, params=params or None, headers=headers)
             if r.status_code == 429:
-                time.sleep(int(r.headers.get("Retry-After", "2")))
+                _throttle.retry_after(r, attempt)
                 continue
             r.raise_for_status()
             return r.json()
